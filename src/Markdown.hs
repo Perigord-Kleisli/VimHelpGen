@@ -1,10 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 
 module Markdown
   ( converter
-  , Indent(..)
-  , ConvertInfo(..)
+  , MDConvertInfo(..)
   , fileName
   ) where
 
@@ -21,81 +21,95 @@ import           GHC.Read
 import           Text.Printf
 import           Text.Read
 
-data Indent = Spaces | Tabs
-  deriving (Show)
+import           Data.Maybe
+import           Numeric.Natural
+import           VimHelpSyntax
 
-instance Read Indent where
-  readPrec = parens $ do
-    Ident s <- lexP
-    fuzzyMatch s
-   where
-    fuzzyMatch x | map toLower x == "tabs"   = return Tabs
-                 | map toLower x == "spaces" = return Spaces
-                 | otherwise                 = pfail
-
-
-data ConvertInfo = ConvertInfo
-  { _lineBreakLength :: Int
-  , _indentType      :: Indent
-  , _indentLevel     :: Int
+data MDConvertInfo = MDConvertInfo
+  { _lineBreakLength :: Natural
+  , _indentLevel     :: Natural
   , _tags            :: [T.Text]
   , _fileName        :: FilePath
   , _moduleName      :: T.Text
   }
   deriving Show
-makeLenses ''ConvertInfo
+makeLenses ''MDConvertInfo
 
-makeTag :: T.Text -> T.Text -> T.Text
-makeTag tagName fileName =
-  T.intercalate "\t" [tagName, fileName, mconcat ["/*", tagName, "*"]]
-
-nodesToVimHelp :: [Node] -> ST.State ConvertInfo [T.Text]
+nodesToVimHelp :: [Node] -> ST.State MDConvertInfo [T.Text]
 nodesToVimHelp ((Node _ THEMATIC_BREAK _) : xs) = do
-  x <- ST.get <&> ((`T.replicate` "=") . _lineBreakLength)
+  x <-
+    ST.get <&> (`T.replicate` "=") . fromInteger . toInteger . _lineBreakLength
   (x :) <$> nodesToVimHelp xs
 
 nodesToVimHelp ((Node _ (HEADING level) conts) : xs) = do
-  headerText <- T.unwords <$> nodesToVimHelp conts
-  fileName   <- T.pack . _fileName <$> ST.get
-  case level of
+  (headerText, tagText) <- case conts of
+    [] -> return ("", Nothing)
+    [Node _ (TEXT text) conts, Node _ (HTML_INLINE tag) _] -> return
+      (text, T.strip <$> (T.stripSuffix "-->" =<< T.stripPrefix "<!--" tag))
+    x -> (,Nothing) . T.unwords <$> nodesToVimHelp x
+
+
+  fileName <- T.pack . _fileName <$> ST.get
+
+  heading <- heading (fromIntegral level) . _lineBreakLength <$> ST.get
+  let tag = makeTag (fromMaybe headerText tagText) fileName
+
+  case fromIntegral level of
     1 -> do
       indentLevel .= 1
-      tags %= (++ [makeTag headerText fileName])
-      breakWidth <-
-        (\x -> T.replicate (x - T.length headerText - 2) " " `mappend` headerText)
-        .   _lineBreakLength
-        <$> ST.get
-      (headerText :) <$> nodesToVimHelp xs
+      tags %= (++ [tag])
+      (heading headerText tagText :) <$> nodesToVimHelp xs
 
     2 -> do
-      indentLevel .= 2 
-      tags %= (++ [makeTag headerText fileName])
-      (headerText :) <$> nodesToVimHelp xs
+      indentLevel .= 2
+      tags %= (++ [tag])
+      (heading headerText tagText :) <$> nodesToVimHelp xs
 
     x -> do
       indentLevel .= x
-      (headerText :) <$> nodesToVimHelp xs
+      (heading headerText Nothing :) <$> nodesToVimHelp xs
 
 nodesToVimHelp ((Node _ (TEXT text) conts) : xs) = do
   text' <- T.unwords . ([text] ++) <$> nodesToVimHelp conts
   (text' :) <$> nodesToVimHelp xs
 
+nodesToVimHelp ((Node _ PARAGRAPH conts): xs) = do
+  text <- T.unlines <$> nodesToVimHelp conts
+  (text:) <$> nodesToVimHelp xs
+
+nodesToVimHelp ((Node _ BLOCK_QUOTE conts) : xs) = do
+  text <- T.unlines . map (("▌ " <>) . T.strip) <$> nodesToVimHelp conts
+  (text:) <$> nodesToVimHelp xs
+
+nodesToVimHelp ((Node _ (CODE_BLOCK info conts) _): xs) = do
+  (("`" <> T.strip conts <> "`"):) <$> nodesToVimHelp xs
+
 nodesToVimHelp ((Node _ (CODE text) conts) : xs) = do
   text' <-
-    ("`" `mappend`) . (`mappend` "`") . T.unwords . ([text] ++) <$> nodesToVimHelp conts
+    ("`" <>)
+    .   (<> "`")
+    .   T.unwords
+    .   ([text] ++)
+    <$> nodesToVimHelp conts
   (text' :) <$> nodesToVimHelp xs
 
 nodesToVimHelp ((Node _ t conts) : xs) =
-  ((T.pack $ printf "%s:    %s" (show t) (show conts)) :) <$> nodesToVimHelp xs
+  ((T.pack $ show $ Node Nothing t conts) :) <$> nodesToVimHelp xs
 nodesToVimHelp [] = return []
 
+-- Generating Text from the file heading
+nodeToVimHelp :: MDConvertInfo -> Node -> (T.Text, T.Text)
+nodeToVimHelp convertInfo (Node _ DOCUMENT ((Node _ (HEADING _) [Node _ (TEXT title) _]) : (Node _ PARAGRAPH [Node _ (TEXT tagline) _]) : xs))
+  = T.unlines . (header :) *** T.unlines . _tags $ ST.runState
+    (nodesToVimHelp xs)
+    convertInfo
+  where header = docHeader (tag $ T.pack $ convertInfo ^. fileName) tagline (convertInfo ^. lineBreakLength)
 
-
-nodeToVimHelp :: ConvertInfo -> Node -> (T.Text, T.Text)
 nodeToVimHelp convertInfo (Node _ DOCUMENT nodes) =
-  T.unlines *** (T.unlines . _tags) $ ST.runState (nodesToVimHelp nodes) convertInfo
+  T.unlines *** T.unlines . _tags $ ST.runState (nodesToVimHelp nodes)
+                                                convertInfo
 
 
-converter :: ConvertInfo -> T.Text -> (T.Text, T.Text)
+converter :: MDConvertInfo -> T.Text -> (T.Text, T.Text)
 converter convertInfo = nodeToVimHelp convertInfo
   . commonmarkToNode [optSmart] [extStrikethrough, extTable, extTaskList]

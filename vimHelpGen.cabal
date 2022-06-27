@@ -1,5 +1,5 @@
 cabal-version:      2.4
-name:               VimHelpGen
+name:               vimHelpGen
 version:            0.1.0.0
 
 -- A short (one-line) description of the package.
@@ -21,40 +21,23 @@ maintainer:         perigordtruffle7318@gmail.com
 -- category:
 extra-source-files: CHANGELOG.md
 
-library
-    exposed-modules:  Markdown
-
-    -- Modules included in this library but not exported.
-    -- other-modules:
-
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
-    build-depends:    base ^>=4.15.1.0
-                    , cmark-gfm >= 0.2.3
-                    , text >= 1.2
-                    , mtl >= 2.2.2
-                    , microlens-platform >= 0.4
-                    , containers >= 0.6
-
-    hs-source-dirs:   src
-    default-language: Haskell2010
-
 executable vimHelpGen
     main-is:          Main.hs
+
+    other-modules:    Markdown
+                      VimHelpSyntax
+
     exposed-modules:  Main
 
-    -- Modules included in this executable, other than Main.
-
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
     build-depends:    base ^>=4.15.1.0
-                    , microlens >= 0.4.13
-                    , microlens-th >= 0.4.3
+                    , cmark-gfm >= 0.2.3
+                    , containers >= 0.6
+                    , mtl >= 2.2.2
+                    , microlens-platform >= 0.4
                     , text >= 1.2
                     , terminal-size >= 0.3
-                    , VimHelpGen
                     , directory >= 1.3.6
                     , filepath >= 1.4
 
-    hs-source-dirs:   app
+    hs-source-dirs:   src
     default-language: Haskell2010
