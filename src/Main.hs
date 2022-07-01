@@ -7,9 +7,11 @@ module Main
   ( main
   ) where
 
-import           Lens.Micro.Platform
+import           Control.Lens
+
 import qualified Data.Text                     as T
 import qualified Data.Text.IO                  as T
+
 import qualified System.Console.Terminal.Size  as Term
 import           System.Directory
 import           System.FilePath.Posix
@@ -19,15 +21,15 @@ import           Control.Applicative
 import           Control.Arrow
 import           Control.Monad
 import           Data.Function
-import           Data.Maybe
 import           Data.List
 import qualified Data.List.NonEmpty            as L
+import           Data.Maybe
+import           Numeric.Natural
 import           System.Console.GetOpt
 import           System.Environment
 import           System.IO
 import           Text.Printf
 import           Text.Read
-import           Numeric.Natural
 
 
 import qualified Markdown                      as M
@@ -39,7 +41,10 @@ data Flags = Flags
   , _debug      :: Bool
   , _breakLen   :: Natural
   , _stdoutOnly :: Bool
+  , _breakText  :: Bool
+  , _unicode    :: Bool
   , _moduleName :: T.Text
+  , _tagLine    :: T.Text
   }
   deriving Show
 
@@ -49,7 +54,10 @@ defaultFlags = Flags { _files      = []
                      , _debug      = False
                      , _breakLen   = 0
                      , _stdoutOnly = False
+                     , _breakText  = True
+                     , _unicode    = False
                      , _moduleName = ""
+                     , _tagLine    = ""
                      }
 makeLenses ''Flags
 
@@ -84,8 +92,8 @@ mX <?> mY | (mX, mY) == (mempty, mempty) = mempty
 
 -- | Index an item from a list via User's choice
 choose :: Show a => L.NonEmpty a -> String -> IO a
-choose (x L.:| []) _ = return x
-choose xs prompt = do
+choose (x L.:| []) _      = return x
+choose xs          prompt = do
   mapM_ (putStrLn . (\(a, b) -> "[" ++ show a ++ "] " ++ show b))
     $ L.zip (L.fromList [0 ..]) xs
   putStr prompt
@@ -97,37 +105,36 @@ choose xs prompt = do
 
 options :: [OptDescr (Flags -> Flags)]
 options =
-  [ Option ['t']
-           ["filetype", "ft"]
-           (ReqArg (fileType .~ ) "FILETYPE")
-           "File type"
-
+  [ Option ['t'] ["filetype", "ft"] (ReqArg (fileType .~) "FILETYPE") "File type"
   , Option ['m']
            ["module-name"]
            (ReqArg ((moduleName .~) . T.pack) "MODULE NAME")
            "Name of the library module"
   , Option ['d'] ["debug"] (NoArg (debug .~ True)) "Print debug info"
-
+  , Option ['u'] ["unicode"] (NoArg (unicode .~ True)) "Enable Unicode Characters"
+  , Option ['T']
+           ["tagline"]
+           (ReqArg ((tagLine .~) . T.pack) "TEXT")
+           "Tagline of the module"
   , Option
-      ['l']
-      ["line-break-length"]
-      (ReqArg (\x -> breakLen .~ fromMaybe (error $ printf "Invalid Number Provided '%s'" x) (readMaybe x)) "LENGTH")
-      "Length of line breaks (default: 100)"
-
-  , Option []
-           ["stdout-only"]
-           (NoArg (stdoutOnly .~ True))
-           "Send output to STDOUT only"
+    ['l']
+    ["line-break-length"]
+    (ReqArg
+      (\x -> breakLen
+        .~ fromMaybe (error $ printf "Invalid Number Provided '%s'" x) (readMaybe x)
+      )
+      "LENGTH"
+    )
+    "Length of line breaks (default: 100)"
+  , Option [] ["stdout-only"] (NoArg (stdoutOnly .~ True)) "Send output to STDOUT only"
   ]
 
 compileOpts :: [String] -> IO (Flags, [String])
 compileOpts argv = do
   case getOpt RequireOrder options argv of
-    (flags, args, []) -> return (foldl (flip id) defaultFlags flags, args)
-    (_, _, errs) ->
-      ioError (userError (concat errs ++ usageInfo header options))
- where
-  header = "Usage: vimHelpGen [OPTIONS...] files...(default: 'README.md')"
+    (flags, args, []  ) -> return (foldl (flip id) defaultFlags flags, args)
+    (_    , _   , errs) -> ioError (userError (concat errs ++ usageInfo header options))
+  where header = "Usage: vimHelpGen [OPTIONS...] files...(default: 'README.md')"
 
 unAbbr :: String -> String
 unAbbr = \case
@@ -139,13 +146,12 @@ main = do
 
   flags <- do
     (flags, files') <- (second (<?> ["README.md"]) <$>) . compileOpts =<< getArgs
-    termSize <- maybe 0 Term.width <$> Term.size
+    termSize        <- maybe 0 Term.width <$> Term.size
 
     -- Checks for a lua directory and chooses one of the available folders
-    modName <- if T.null $ flags ^. moduleName 
-        then return []
-        else 
-          (\case
+    modName         <- if T.null $ flags ^. moduleName
+      then
+        (\case
             []  -> return mempty
             [x] -> return x
             xs  -> choose (L.fromList xs) "Choose name of module: "
@@ -154,6 +160,7 @@ main = do
               >>= maybe (return mempty) listDirectory
               .   ((== "lua") `find`)
               )
+      else return []
 
     return -- For processing arguments after Parsing
       $ (files .~ files')
@@ -161,25 +168,27 @@ main = do
       . (breakLen %~ const 100 `applyIf` (== 0))
       . (moduleName %~ (<?> T.pack modName))
       $ flags
-  
+
 
   forM_ (flags ^. files) $ \file -> do
 
-    let convertInfo = M.MDConvertInfo { 
-                                      M._lineBreakLength = flags ^. breakLen
-                                    , M._indentLevel     = 0
-                                    , M._tags            = []
-                                    , M._fileName        = file
-                                    , M._moduleName      = flags ^. moduleName
-                                    }
+    let convertInfo = M.MDConvertInfo { M._lineBreakLength = flags ^. breakLen
+                                      , M._indentLevel     = 0
+                                      , M._tags            = []
+                                      , M._fileName        = replaceExtension file "txt"
+                                      , M._moduleName      = flags ^. moduleName
+                                      , M._breakText       = flags ^. breakText
+                                      , M._tagLine         = flags ^. tagLine
+                                      , M._unicode         = flags ^. unicode
+                                      }
 
-    let output (helpTxt, tags) = mapM_
-          T.putStrLn
-          [T.pack file, "-----", helpTxt, "tags:", "-----", tags]
-
-    --hPrint stderr flags >> void getChar
+    let output (helpTxt, tags) = if flags ^. stdoutOnly
+          then mapM_ T.putStrLn [T.pack file, "-----", helpTxt, "tags:", "-----", tags]
+          else do
+            createDirectoryIfMissing True "doc/"
+            T.writeFile (T.unpack $ "doc/" <> flags ^. moduleName <> ".txt") helpTxt
+            T.writeFile "doc/tags" tags
 
     case flags ^. fileType of
       "markdown" -> T.readFile file >>= output . M.converter convertInfo
-      _ ->
-        ioError (userError $ "Unknown file type: '" ++ flags ^. fileType ++ "'")
+      _ -> ioError (userError $ "Unknown file type: '" ++ flags ^. fileType ++ "'")
