@@ -26,6 +26,8 @@ executable vimHelpGen
 
     other-modules:    Markdown
                       VimHelpSyntax
+                      Util
+                      Filetype
 
     exposed-modules:  Main
 

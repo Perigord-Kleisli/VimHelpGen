@@ -3,6 +3,8 @@ An h1 header
 
 Paragraphs are separated by a blank line.
 
+
+# Ofcourse it is <!--adds-->
 2nd paragraph. *Italic*, **bold**, and `monospace`. Itemized lists
 look like:
 
