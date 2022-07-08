@@ -6,10 +6,13 @@ import qualified Data.Text as T
 import Control.Lens
 import Numeric.Natural
 import Text.Printf
+import qualified Text.Read as L
 import Control.Arrow
 import Data.Function
 import Data.Char
 import Util
+import Control.Applicative
+import Data.Maybe
 
 
 data ConvertInfo = ConvertInfo
@@ -25,8 +28,17 @@ data ConvertInfo = ConvertInfo
   deriving Show
 makeLenses ''ConvertInfo
 
+data Link = HeaderLink T.Text | URL T.Text | Footnote T.Text
+  deriving Show
+
+readLink :: T.Text -> Link
+readLink text = fromMaybe undefined $
+      HeaderLink <$> T.stripPrefix "#" text 
+  <|> Footnote <$> T.stripPrefix "^" text
+  <|> Just (URL text)
+
 tag :: T.Text -> T.Text
-tag = ("*" <>) . (<> "*") . T.strip . T.replace " " "_"
+tag = ("*" <>) . (<> "*") . T.strip . T.replace " " "-"
 
 makeTag :: T.Text -> T.Text -> T.Text
 makeTag tagName fileName =

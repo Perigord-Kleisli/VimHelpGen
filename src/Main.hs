@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TemplateHaskell #-} {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-} 
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiWayIf #-}
 
 module Main
