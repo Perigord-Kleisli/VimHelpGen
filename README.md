@@ -13,5 +13,5 @@ vimdowner [OPTIONS...] files...(default: 'README.md')
                   --no-toc                    Do not add a Table of Contents
 ```
 
-# Sample
+# Sample using [Plenary.nvim](https://github.com/nvim-lua/plenary.nvim)
  ![](img/2022-07-18-17-17-19.png) 
